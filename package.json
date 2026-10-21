@@ -1,0 +1,58 @@
+{
+  "name": "@featureflip/edge",
+  "version": "2.14.1",
+  "description": "Cloudflare Workers SDK for Featureflip: local flag evaluation at the edge",
+  "keywords": [
+    "feature-flags",
+    "feature-toggles",
+    "feature-management",
+    "featureflip",
+    "cloudflare-workers",
+    "edge",
+    "typescript",
+    "sdk"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/canopy-labs/featureflip-edge.git"
+  },
+  "homepage": "https://featureflip.io/docs/sdks/edge/",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261019.1",
+    "@types/node": "^26.6.5",
+    "@typescript/typescript6": "^6.0.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vite-plugin-dts": "^5.1.2",
+    "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "overrides": {
+    "lodash": ">=4.17.25"
+  }
+}
