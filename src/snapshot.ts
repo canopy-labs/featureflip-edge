@@ -1,4 +1,5 @@
 import { resolveDetail } from '../../js-sdk/src/core/resolve-detail.js';
+import { warnUnbucketable } from '../../js-sdk/src/core/unbucketable.js';
 import type { ExpectedValueType, ResolveDeps } from '../../js-sdk/src/core/resolve-detail.js';
 import { validateSnapshot } from '../../js-sdk/src/core/validate-snapshot.js';
 import { dropUnevaluableEntities } from '../../js-sdk/src/core/unevaluable.js';
@@ -62,6 +63,7 @@ export class EdgeSnapshot {
     this.deps = {
       md5: md5Bytes,
       getSegment: (key) => segmentsByKey.get(key),
+      onUnbucketable: (i) => warnUnbucketable(i),
     };
   }
 
