@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { EdgeSnapshot } from '../src/snapshot.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EdgeSnapshot, __resetMissingFlagWarningsForTests } from '../src/snapshot.js';
 import { MalformedPayloadError } from '../../js-sdk/src/core/validate-snapshot.js';
 import { resolveDetail } from '../../js-sdk/src/core/resolve-detail.js';
 import type { FlagDto, GetFlagsResponse } from '../../js-sdk/src/core/types.js';
@@ -50,6 +50,10 @@ function fixture(): GetFlagsResponse {
 
 const ctx = { userId: 'u' };
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('EdgeSnapshot', () => {
   it('boolVariation returns the served value', () => {
     const snap = EdgeSnapshot.fromResponse(fixture(), () => {});
@@ -59,13 +63,48 @@ describe('EdgeSnapshot', () => {
   });
 
   it('unknown flag returns default with FlagNotFound', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     const snap = EdgeSnapshot.fromResponse(fixture(), () => {});
     expect(snap.variationDetail('nope', ctx, 'd')).toEqual({ value: 'd', reason: 'FlagNotFound' });
   });
 
+  describe('a key missing from a loaded config', () => {
+    beforeEach(() => __resetMissingFlagWarningsForTests());
+
+    it('warns once per key, naming it', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const snap = EdgeSnapshot.fromResponse(fixture(), () => {});
+      snap.boolVariation('typo-flag', ctx, false);
+      snap.boolVariation('typo-flag', ctx, false);
+      // A later snapshot is the same isolate: still once.
+      EdgeSnapshot.fromResponse(fixture(), () => {}).boolVariation('typo-flag', ctx, false);
+      snap.stringVariation('other-typo', ctx, 'd');
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        expect.stringMatching(/^\[featureflip-edge\] flag "typo-flag" is not in the loaded configuration/),
+        expect.stringMatching(/^\[featureflip-edge\] flag "other-typo" is not in/),
+      ]);
+    });
+
+    it('is silent for a found flag and for a snapshot with no config', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      EdgeSnapshot.fromResponse(fixture(), () => {}).boolVariation('on-flag', ctx, false);
+      EdgeSnapshot.empty(() => {}).boolVariation('typo-flag', ctx, false);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('stops warning after 1000 distinct keys', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const snap = EdgeSnapshot.fromResponse(fixture(), () => {});
+      for (let i = 0; i < 1001; i++) snap.boolVariation(`missing-${i}`, ctx, false);
+      expect(warn).toHaveBeenCalledTimes(1000);
+    });
+  });
+
   it('typed mismatch returns default with Error', () => {
-    const snap = EdgeSnapshot.fromResponse(fixture(), () => {});
+    const rec = vi.fn();
+    const snap = EdgeSnapshot.fromResponse(fixture(), rec);
     expect(snap.numberVariation('str', ctx, 7)).toBe(7);
+    expect(rec.mock.calls[0]![2]).toMatchObject({ value: 7, reason: 'Error' });
     // variationDetail is untyped: it hands back the served value as-is.
     expect(snap.variationDetail('str', ctx, 7).value).toBe('42');
   });

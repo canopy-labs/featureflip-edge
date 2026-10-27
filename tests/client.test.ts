@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { createEdgeClient } from '../src/index.js';
 import { createCacheApiStore } from '../src/store.js';
 import {
@@ -20,7 +21,7 @@ const T0 = new Date('2026-10-20T12:00:00.000Z').getTime();
 const ctxUser = { userId: 'u' };
 
 let cache: FakeCache;
-let warn: ReturnType<typeof vi.spyOn>;
+let warn: MockInstance<typeof console.warn>;
 
 beforeEach(() => {
   vi.useFakeTimers();

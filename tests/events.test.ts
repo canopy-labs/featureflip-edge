@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { createEdgeClient } from '../src/index.js';
 import type { RecordEventsRequest } from '../../js-sdk/src/core/types.js';
 import {
@@ -14,7 +15,7 @@ import {
 } from './fakes.js';
 
 const T0 = new Date('2026-10-20T12:00:00.000Z').getTime();
-let warn: ReturnType<typeof vi.spyOn>;
+let warn: MockInstance<typeof console.warn>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -358,6 +359,43 @@ describe('event delivery throttling', () => {
     snap.boolVariation('on-flag', { userId: 'c' }, false);
     await client.flush();
     expect(users(fetch)).toEqual([['a'], ['a', 'b'], ['c']]);
+  });
+
+  it('a flush that joins a hung POST gives up once that POST is 30 s old, with no other traffic', async () => {
+    const hung = deferred<Response>();
+    let posts = 0;
+    const fetch = fakeFetch({
+      flags: async () => jsonResponse(flagsPayload(1)),
+      events: () =>
+        posts++ === 0 ? hung.promise : Promise.resolve(new Response(null, { status: 202 })),
+    });
+    const client = createEdgeClient({ sdkKey: 'sdk_server_k', fetch });
+    const snap = await client.load(new FakeCtx());
+    snap.boolVariation('on-flag', { userId: 'a' }, false);
+    // Runs the per-request flush; its POST never settles.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(callsTo(fetch, '/v1/sdk/events')).toHaveLength(1);
+
+    // A handler with no ctx awaits flush(), which joins the hung POST.
+    vi.setSystemTime(T0 + 1_000);
+    snap.boolVariation('on-flag', { userId: 'b' }, false);
+    let flushed = false;
+    void client.flush().then(() => {
+      flushed = true;
+    });
+    // No later flush comes along to abandon the POST; the caller's own timer does.
+    await vi.advanceTimersByTimeAsync(28_000);
+    expect(flushed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(flushed).toBe(true);
+    expect(callsTo(fetch, '/v1/sdk/events')).toHaveLength(1);
+    expect(warn.mock.calls.map((c) => c.map(String).join(' ')).join('\n')).toMatch(
+      /\[featureflip-edge\].*events.*30000ms/,
+    );
+
+    // The abandoned batch is back at the front, and the next flush sends it once.
+    await client.flush();
+    expect(users(fetch)).toEqual([['a'], ['a', 'b']]);
   });
 
   it('an explicit flush sends below the batch size, outside backoff', async () => {

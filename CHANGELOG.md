@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.17.0 — 2026-10-27
+
+### Added
+
+- Reading a flag key that the loaded configuration doesn't contain now logs a warning naming the key, once per key per isolate, so a typo in a key shows up in the Worker's logs. A snapshot with no configuration loaded stays silent. (#4210)
+
+### Fixed
+
+- A `flush()` that joined an events POST already in flight could wait until some later flush gave up on that POST, which for a handler with no `ctx` meant until other traffic arrived. It now waits until the POST is 30 seconds old at most, then abandons it and requeues its events. (#4210)
+- A cached config entry whose `x-featureflip-fetched-at` header is empty, zero, negative, fractional or in the future is now ignored. An empty header used to read as 0, and a future time made the entry look fresh until the cache evicted it. (#4210)
+
 ## 2.16.0 — 2026-10-26
 
 ### Added

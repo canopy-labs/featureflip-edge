@@ -1,12 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EdgeSnapshot } from '../src/snapshot.js';
 import type { GetFlagsResponse } from '../../js-sdk/src/core/types.js';
 
 // Read js-sdk's copy rather than adding a ninth: the edge SDK evaluates with the
 // js core, so this runs the same vectors through the edge's public surface.
 const vectors = JSON.parse(
-  readFileSync(new URL('../../js-sdk/tests/golden/vectors.json', import.meta.url), 'utf8'),
+  readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../js-sdk/tests/golden/vectors.json'),
+    'utf8',
+  ),
 ) as {
   flagVectors: Array<{
     id: string;

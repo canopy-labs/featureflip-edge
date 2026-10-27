@@ -30,6 +30,17 @@ export async function configCacheKey(baseUrl: string, sdkKey: string): Promise<s
   return `https://featureflip-edge.invalid/config/${hex}`;
 }
 
+/**
+ * The header as epoch ms: a positive integer no later than now, else undefined.
+ * `Number('')` is 0, so a bare `Number()` check would pass an empty value, and
+ * a time in the future would make the entry look fresh until `max-age` evicts it.
+ */
+function parseFetchedAt(header: string | null): number | undefined {
+  if (header === null || !/^[0-9]+$/.test(header)) return undefined;
+  const fetchedAt = Number(header);
+  return fetchedAt > 0 && fetchedAt <= Date.now() ? fetchedAt : undefined;
+}
+
 let warnedNoCache = false;
 
 const noopStore: ConfigStore = {
@@ -52,8 +63,10 @@ export function createCacheApiStore(cacheKey: string, cache?: Cache): ConfigStor
       try {
         const res = await resolved.match(cacheKey);
         if (!res) return undefined;
-        const fetchedAt = Number(res.headers.get(FETCHED_AT_HEADER));
-        if (!res.headers.has(FETCHED_AT_HEADER) || !Number.isFinite(fetchedAt)) {
+        const fetchedAt = parseFetchedAt(res.headers.get(FETCHED_AT_HEADER));
+        if (fetchedAt === undefined) {
+          // The body will not be read. Cancelling it releases it now.
+          void res.body?.cancel().catch(() => {});
           throw new Error(`cache entry has a missing or invalid ${FETCHED_AT_HEADER} header`);
         }
         const data = (await res.json()) as GetFlagsResponse;

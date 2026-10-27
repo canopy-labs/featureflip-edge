@@ -45,6 +45,14 @@ describe('createCacheApiStore', () => {
     ['unparseable body', () => new Response('{not json', { headers: { [FETCHED_AT_HEADER]: '1' } })],
     ['missing header', () => new Response(JSON.stringify(data))],
     ['non-numeric header', () => new Response(JSON.stringify(data), { headers: { [FETCHED_AT_HEADER]: 'x' } })],
+    ['empty header', () => new Response(JSON.stringify(data), { headers: { [FETCHED_AT_HEADER]: '' } })],
+    ['zero header', () => new Response(JSON.stringify(data), { headers: { [FETCHED_AT_HEADER]: '0' } })],
+    ['negative header', () => new Response(JSON.stringify(data), { headers: { [FETCHED_AT_HEADER]: '-5' } })],
+    ['fractional header', () => new Response(JSON.stringify(data), { headers: { [FETCHED_AT_HEADER]: '1.5' } })],
+    [
+      'future header',
+      () => new Response(JSON.stringify(data), { headers: { [FETCHED_AT_HEADER]: String(Date.now() + 60_000) } }),
+    ],
     [
       'invalid snapshot',
       () => new Response(JSON.stringify({ flags: 'nope', segments: [] }), { headers: { [FETCHED_AT_HEADER]: '1' } }),
@@ -57,6 +65,24 @@ describe('createCacheApiStore', () => {
     expect(await store.get()).toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain('[featureflip-edge]');
+  });
+
+  it('a rejected entry has its unread body cancelled', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const entry = new Response(JSON.stringify(data), { headers: { [FETCHED_AT_HEADER]: 'x' } });
+    const cache = { match: async () => entry } as unknown as Cache;
+    expect(await createCacheApiStore(KEY, cache).get()).toBeUndefined();
+    // Cancelling disturbs the body; left unread it would not be.
+    expect(entry.bodyUsed).toBe(true);
+  });
+
+  it('defaults to caches.default', async () => {
+    const fake = new FakeCache();
+    vi.stubGlobal('caches', { default: fake });
+    const store = createCacheApiStore(KEY);
+    await store.put({ data, fetchedAt: 1234 }, 60);
+    expect(fake.entries.has(KEY)).toBe(true);
+    expect(await store.get()).toEqual({ data, fetchedAt: 1234 });
   });
 
   it('throwing cache is a miss, and a rejecting put resolves, both warning', async () => {

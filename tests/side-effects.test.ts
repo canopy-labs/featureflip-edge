@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 // package.json declares `"sideEffects": false`, which tells bundlers they may
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url';
 // the trace an empty module leaves. Every other test imports TypeScript
 // source, so this goes through the built dist/ file instead.
 
-const pkgDir = fileURLToPath(new URL('..', import.meta.url));
+const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(resolve(pkgDir, 'package.json'), 'utf8')) as {
   sideEffects?: unknown;
   exports: unknown;

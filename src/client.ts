@@ -31,7 +31,8 @@ export interface EdgeClient {
   /**
    * Sends queued evaluation events now, up to 5 batches. Never rejects. Await it
    * when there is no `ctx`. Within 30 s of a failed send it resolves without
-   * sending, and the events stay queued.
+   * sending, and the events stay queued. A send already in flight is waited on
+   * until it is 30 s old at most, then abandoned and its events requeued.
    */
   flush(): Promise<void>;
 }
@@ -216,7 +217,7 @@ class Client implements EdgeClient {
         return;
       }
       this.eventFlush = this.events.flush();
-      await this.eventFlush;
+      await this.awaitEventFlush();
     } catch (err) {
       console.warn(`${PREFIX} event flush failed:`, err);
     }
@@ -233,6 +234,44 @@ class Client implements EdgeClient {
     if (!send || Date.now() - send.startedAt <= STALLED_SEND_MS) return;
     send.abandon();
     await this.eventFlush.catch(() => {});
+  }
+
+  /**
+   * Wait for `eventFlush`, but abandon any POST it is on once that POST is
+   * STALLED_SEND_MS old. A flush can join a POST that an earlier request
+   * started, and without this it would wait until some later flush abandons it,
+   * which for a handler with no `ctx` awaiting `flush()` means until other
+   * traffic arrives. The timer belongs to the request doing the waiting, so it
+   * is as live as that request.
+   */
+  private async awaitEventFlush(): Promise<void> {
+    const flushing = this.eventFlush;
+    let done = false;
+    const finished = flushing.then(
+      () => {
+        done = true;
+      },
+      () => {
+        done = true;
+      },
+    );
+    while (!done) {
+      const send = this.pendingSend;
+      // With no POST pending the processor is between batches, about to start
+      // the next one, so look again on the next turn.
+      const wait = send ? send.startedAt + STALLED_SEND_MS + 1 - Date.now() : 0;
+      let expire!: () => void;
+      const expired = new Promise<void>((resolve) => {
+        expire = resolve;
+      });
+      const timer = setTimeout(() => expire(), Math.max(0, wait));
+      await Promise.race([finished, expired]);
+      clearTimeout(timer);
+      if (send && this.pendingSend === send && Date.now() - send.startedAt > STALLED_SEND_MS) {
+        send.abandon();
+      }
+    }
+    await flushing;
   }
 
   private async resolveSnapshot(ctx: WaitUntilContext | undefined): Promise<EdgeSnapshot> {
@@ -288,7 +327,7 @@ class Client implements EdgeClient {
     const timedOut = new Promise<true>((resolve) => {
       expire = resolve;
     });
-    // The one timer this client starts; cleared as soon as the fetch wins.
+    // Cleared as soon as the fetch wins.
     const timer = setTimeout(() => expire(true), this.config.loadTimeoutMs);
     const outcome = await Promise.race([fetching.loaded.then(() => false as const), timedOut]);
     clearTimeout(timer);

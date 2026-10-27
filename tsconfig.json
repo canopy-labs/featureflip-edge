@@ -21,8 +21,7 @@
     "src",
     "../js-sdk/src/core",
     "../js-sdk/src/platform/browser.ts",
-    "../js-sdk/src/platform/types.ts",
-    "../js-sdk/src/globals.d.ts"
+    "../js-sdk/src/platform/types.ts"
   ],
   "exclude": ["node_modules", "dist", "tests"]
 }

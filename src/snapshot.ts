@@ -22,6 +22,28 @@ export type EvaluationRecorder = (
   detail: EvaluationDetail,
 ) => void;
 
+const MAX_MISSING_KEYS = 1000;
+const warnedMissing = new Set<string>();
+
+/**
+ * Logs once per flag key per isolate that a loaded config has no such flag, so
+ * a typo in a key is discoverable without a warning on every read. The set is
+ * capped; once full, unseen keys are dropped silently.
+ */
+function warnMissingFlag(key: string): void {
+  if (warnedMissing.has(key) || warnedMissing.size >= MAX_MISSING_KEYS) return;
+  warnedMissing.add(key);
+  console.warn(
+    `[featureflip-edge] flag "${key}" is not in the loaded configuration; serving the default. ` +
+      'Check the key, and that the flag exists in the environment this SDK key belongs to.',
+  );
+}
+
+/** Test-only: clears the isolate-wide dedup set so tests don't depend on run order. */
+export function __resetMissingFlagWarningsForTests(): void {
+  warnedMissing.clear();
+}
+
 /**
  * An immutable, evaluable view of one `GET /v1/sdk/flags` payload.
  *
@@ -38,12 +60,15 @@ export class EdgeSnapshot {
 
   private readonly flags: Record<string, FlagDto>;
   private readonly flagList: readonly FlagDto[];
+  /** Keys dropped as unevaluable, which were warned about when dropped. */
+  private readonly dropped: ReadonlySet<string>;
   private readonly deps: ResolveDeps;
   private readonly record: EvaluationRecorder;
 
   private constructor(
     flags: FlagDto[],
     segments: SegmentDto[],
+    dropped: ReadonlySet<string>,
     version: number | undefined,
     ready: boolean,
     record: EvaluationRecorder,
@@ -57,6 +82,7 @@ export class EdgeSnapshot {
 
     this.flags = byKey;
     this.flagList = flags;
+    this.dropped = dropped;
     this.version = version;
     this.ready = ready;
     this.record = record;
@@ -64,6 +90,7 @@ export class EdgeSnapshot {
       md5: md5Bytes,
       getSegment: (key) => segmentsByKey.get(key),
       onUnbucketable: (i) => warnUnbucketable(i),
+      onError: (err, key) => console.warn(`[featureflip-edge] evaluation threw for "${key}":`, err),
     };
   }
 
@@ -87,12 +114,13 @@ export class EdgeSnapshot {
           'configuration was applied.',
       );
     }
-    return new EdgeSnapshot(flags, segments, data.version, true, record);
+    const droppedFlags = new Set(dropped.filter((e) => e.kind === 'flag').map((e) => e.key));
+    return new EdgeSnapshot(flags, segments, droppedFlags, data.version, true, record);
   }
 
   /** A snapshot with no flags: every read serves its default with `FlagNotFound`. */
   static empty(record: EvaluationRecorder): EdgeSnapshot {
-    return new EdgeSnapshot([], [], undefined, false, record);
+    return new EdgeSnapshot([], [], new Set(), undefined, false, record);
   }
 
   boolVariation(key: string, context: EvaluationContext, defaultValue: boolean): boolean {
@@ -134,7 +162,7 @@ export class EdgeSnapshot {
     for (const flag of this.flagList) {
       if (flag.clientSideVisible !== true) continue;
       const detail = resolveDetail<unknown>(
-        flag, context, null, this.depsFor(flag.key), this.flags, undefined, memo,
+        flag, context, null, this.deps, this.flags, undefined, memo,
       );
       // Omit rather than emit a placeholder: an absent key lets the browser SDK
       // fall back to its own default, where a `null` would be served as the
@@ -153,14 +181,6 @@ export class EdgeSnapshot {
     return out;
   }
 
-  /** The shared deps plus an error hook that names the flag being read. */
-  private depsFor(key: string): ResolveDeps {
-    return {
-      ...this.deps,
-      onError: (err) => console.warn(`[featureflip-edge] evaluation threw for "${key}":`, err),
-    };
-  }
-
   private evaluate<T>(
     key: string,
     context: EvaluationContext,
@@ -168,8 +188,11 @@ export class EdgeSnapshot {
     expected?: ExpectedValueType,
   ): EvaluationDetail<T> {
     const detail = resolveDetail(
-      this.flags[key], context, defaultValue, this.depsFor(key), this.flags, expected,
+      this.flags[key], context, defaultValue, this.deps, this.flags, expected,
     );
+    if (detail.reason === 'FlagNotFound' && this.ready && !this.dropped.has(key)) {
+      warnMissingFlag(key);
+    }
     try {
       this.record(key, context, detail);
     } catch (err) {
