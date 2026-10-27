@@ -1,23 +1,46 @@
 import { vi } from 'vitest';
 import type { FlagDto, GetFlagsResponse } from '../../js-sdk/src/core/types.js';
 
-/** In-memory stand-in for the Workers Cache API: clones on put and on match, like the real one. */
+/**
+ * In-memory stand-in for the Workers Cache API. Like the real one it clones on
+ * put and on match, rejects a put of a 206 or a `Vary: *` response, and stops
+ * matching an entry once its `max-age` has passed (read from `Date.now()`, so
+ * fake timers drive it). An entry put without a `max-age` never expires here.
+ */
 export class FakeCache {
   readonly entries = new Map<string, Response>();
+  /** Epoch ms after which each entry no longer matches. */
+  private readonly expiresAt = new Map<string, number>();
 
   private keyOf(req: RequestInfo | URL): string {
     return typeof req === 'string' ? req : req instanceof URL ? req.href : (req as Request).url;
   }
 
   async match(req: RequestInfo | URL): Promise<Response | undefined> {
-    return this.entries.get(this.keyOf(req))?.clone();
+    const key = this.keyOf(req);
+    const expiresAt = this.expiresAt.get(key);
+    if (expiresAt !== undefined && Date.now() >= expiresAt) {
+      this.entries.delete(key);
+      this.expiresAt.delete(key);
+      return undefined;
+    }
+    return this.entries.get(key)?.clone();
   }
 
   async put(req: RequestInfo | URL, res: Response): Promise<void> {
-    this.entries.set(this.keyOf(req), res.clone());
+    if (res.status === 206) throw new TypeError('Cannot cache response to a range request (206 Partial Content).');
+    if (res.headers.get('vary')?.split(',').some((v) => v.trim() === '*')) {
+      throw new TypeError("Cannot cache response with 'Vary: *' header.");
+    }
+    const key = this.keyOf(req);
+    this.entries.set(key, res.clone());
+    const maxAge = /(?:^|,)\s*max-age=(\d+)/.exec(res.headers.get('cache-control') ?? '');
+    if (maxAge) this.expiresAt.set(key, Date.now() + Number(maxAge[1]) * 1000);
+    else this.expiresAt.delete(key);
   }
 
   async delete(req: RequestInfo | URL): Promise<boolean> {
+    this.expiresAt.delete(this.keyOf(req));
     return this.entries.delete(this.keyOf(req));
   }
 }

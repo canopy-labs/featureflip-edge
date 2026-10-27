@@ -287,6 +287,19 @@ describe('createEdgeClient load path', () => {
     expect(snap.version).toBe(1);
   });
 
+  it('a fresh isolate past maxStaleSeconds finds the entry evicted and goes to origin', async () => {
+    const ctxA = new FakeCtx();
+    await createEdgeClient({ sdkKey: KEY, fetch: versionedFetch(1), maxStaleSeconds: 600 }).load(ctxA);
+    await settle(ctxA);
+
+    vi.setSystemTime(T0 + 600_001);
+    const fetchB = versionedFetch(2);
+    const snap = await createEdgeClient({ sdkKey: KEY, fetch: fetchB, maxStaleSeconds: 600 }).load(new FakeCtx());
+    expect(callsTo(fetchB, '/v1/sdk/flags')).toHaveLength(1);
+    expect(snap.version).toBe(2);
+    expect(warnings()).not.toMatch(/unreadable cached config/);
+  });
+
   it('a stale store copy is served and refreshed', async () => {
     const ctxA = new FakeCtx();
     await createEdgeClient({ sdkKey: KEY, fetch: versionedFetch(1) }).load(ctxA);

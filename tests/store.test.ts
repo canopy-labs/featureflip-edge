@@ -36,6 +36,20 @@ describe('createCacheApiStore', () => {
     expect(await store.get()).toEqual({ data, fetchedAt: 1234 });
   });
 
+  it('an entry stops matching once its max-age (maxStaleSeconds) has passed', async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      const store = createCacheApiStore(KEY, asCache(new FakeCache()));
+      await store.put({ data, fetchedAt: 1_000_000 }, 60);
+      vi.setSystemTime(1_059_999);
+      expect(await store.get()).toEqual({ data, fetchedAt: 1_000_000 });
+      vi.setSystemTime(1_060_000);
+      expect(await store.get()).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('get on an empty cache is a miss', async () => {
     const store = createCacheApiStore(KEY, asCache(new FakeCache()));
     expect(await store.get()).toBeUndefined();
@@ -96,6 +110,18 @@ describe('createCacheApiStore', () => {
     await expect(store.put({ data, fetchedAt: 1 }, 60)).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(2);
     expect(warn.mock.calls.map((c) => c.join(' ')).join('\n')).toMatch(/match boom[\s\S]*put boom/);
+  });
+
+  // The fake must refuse what the Workers cache refuses, or a store change that
+  // only works against the fake would pass here and fail in a Worker. (The
+  // store's handling of a rejected put is the "throwing cache" test above.)
+  it.each([
+    ['a 206', () => new Response('x', { status: 206 })],
+    ['a Vary: * response', () => new Response('x', { headers: { vary: 'accept, *' } })],
+  ])('the fake cache rejects %s put', async (_n, make) => {
+    const fake = new FakeCache();
+    await expect(fake.put(KEY, make())).rejects.toThrow(TypeError);
+    expect(fake.entries.size).toBe(0);
   });
 
   it('missing caches global falls back to a no-op store and warns once', async () => {

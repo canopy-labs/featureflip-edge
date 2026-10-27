@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.17.1 — 2026-10-27
+
+### Changed
+
+- The type declarations now ship as one rolled-up `.d.ts` per entry point instead of a file per source module. The exported types are unchanged. The package no longer ships declarations for the parts of the shared core that nothing in its API reaches. (#4346)
+
 ## 2.17.0 — 2026-10-27
 
 ### Added
