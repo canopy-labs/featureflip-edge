@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.16.0 — 2026-10-26
+
+### Added
+
+- Evaluation events now carry the reason for the read (`rule-match`, `fallthrough`, `flag-disabled`, `prerequisite-failed`, `error` or `flag-not-found`) and, on a rule match, the matched rule's id as `ruleId`. The flag Analytics tab uses them to show which part of the targeting served the traffic; events from older SDK versions count as an unknown source. `EvaluationDetail` is unchanged. (#4268)
+
 ## 2.15.0 — 2026-10-22
 
 ### Changed

@@ -1,6 +1,6 @@
 import { EventProcessor, EventSendError } from '../../js-sdk/src/core/events.js';
 import { buildIdentity } from '../../js-sdk/src/core/identity.js';
-import { resolveEventUserId } from '../../js-sdk/src/core/shared-core.js';
+import { buildEvaluationEvent } from '../../js-sdk/src/core/shared-core.js';
 import type { GetFlagsResponse, RecordEventsRequest } from '../../js-sdk/src/core/types.js';
 import { resolveEdgeConfig } from './config.js';
 import type { EdgeConfig, ResolvedEdgeConfig } from './config.js';
@@ -160,19 +160,10 @@ class Client implements EdgeClient {
       // can be cut off mid-flight with its batch already taken off the queue.
       { flushOnFullBatch: false, maxBatchesPerFlush: MAX_BATCHES_PER_FLUSH },
     );
-    // Same fields as SharedFeatureflipCore.recordEvaluation. `prerequisiteKey` and
-    // `userId` are undefined when absent, and JSON.stringify drops them, so they
-    // are omitted on the wire rather than sent as null.
+    // Same event as SharedFeatureflipCore builds. A JS caller can pass a null
+    // context; that is an anonymous read, not an error.
     this.record = (flagKey, context, detail) => {
-      this.events.enqueue({
-        type: 'Evaluation',
-        flagKey,
-        // A JS caller can pass a null context; that is an anonymous read, not an error.
-        userId: resolveEventUserId(context ?? {}),
-        variation: detail.variationKey,
-        timestamp: new Date().toISOString(),
-        prerequisiteKey: detail.prerequisiteKey,
-      });
+      this.events.enqueue(buildEvaluationEvent(flagKey, context ?? {}, detail));
     };
     this.emptySnapshot = EdgeSnapshot.empty(this.record);
   }

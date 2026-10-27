@@ -59,10 +59,12 @@ describe('evaluation events', () => {
           userId: 'u',
           variation: 'on',
           timestamp: new Date(T0).toISOString(),
+          reason: 'fallthrough',
         },
       ],
     });
     expect(body.events[0]).not.toHaveProperty('prerequisiteKey');
+    expect(body.events[0]).not.toHaveProperty('ruleId');
   });
 
   it('resolves user_id as well as userId, and omits userId for an anonymous context', async () => {
@@ -94,6 +96,7 @@ describe('evaluation events', () => {
         variation: 'off',
         timestamp: new Date(T0).toISOString(),
         prerequisiteKey: 'server-only',
+        reason: 'prerequisite-failed',
       },
     ]);
   });
