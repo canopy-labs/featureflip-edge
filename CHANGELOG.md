@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.17.2 — 2026-10-27
+
+### Changed
+
+- Republished in lockstep with `@featureflip/browser` 2.17.2. This package has no source changes of its own. Recorded here because the npm release tag publishes all five JavaScript packages at a single version. (#4358)
+
 ## 2.17.1 — 2026-10-27
 
 ### Changed
