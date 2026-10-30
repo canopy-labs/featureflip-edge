@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.18.0 — 2026-10-30
+
+### Fixed
+
+- A rollout whose Bucket by value is an array, a plain object, a `Map` or a `Set` (empty or not) can't be bucketed, so the rule is skipped like one with no value, as in the evaluation engine and every other SDK. (#4572)
+- The local evaluator now resolves the built-in user identifier like the evaluation engine: `user_id` when present and non-null, otherwise `userId`. A context carrying both spellings no longer reads `userId` ahead of `user_id`, and a `null` `user_id` falls through to `userId`. An empty string is a value. The default Bucket by is now `user_id`. (#4518)
+
 ## 2.17.2 — 2026-10-27
 
 ### Changed

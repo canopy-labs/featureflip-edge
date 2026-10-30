@@ -18,7 +18,9 @@ const vectors = JSON.parse(
     flagKey: string;
     flags: GetFlagsResponse['flags'];
     segments: GetFlagsResponse['segments'];
-    context: { userId: string; attributes: Record<string, unknown> };
+    context?: { userId: string; attributes: Record<string, unknown> };
+    wireContext?: Record<string, unknown>;
+    requires?: string[];
     expected: {
       variation: string;
       value: unknown;
@@ -54,8 +56,14 @@ const sortKeys = (_k: string, val: unknown): unknown =>
       )
     : val;
 
+// The edge takes an untyped map context and matches identity case-sensitively.
+const SUPPORTED_CAPABILITIES = new Set(['mapContext', 'exactCaseIdentity']);
+
 describe('golden flagVectors through EdgeSnapshot', () => {
+  let executedFlagVectors = 0;
   for (const v of vectors.flagVectors) {
+    if ((v.requires ?? []).some((t) => !SUPPORTED_CAPABILITIES.has(t))) continue;
+    executedFlagVectors++;
     it(v.id, () => {
       const snap = EdgeSnapshot.fromResponse(
         { environment: 'golden', version: 1, flags: v.flags, segments: v.segments },
@@ -63,10 +71,9 @@ describe('golden flagVectors through EdgeSnapshot', () => {
       );
 
       // Merge userId + attributes into a flat EvaluationContext, as js-sdk's runner does.
-      const ctx: Record<string, unknown> = {
-        userId: v.context.userId,
-        ...v.context.attributes,
-      };
+      const ctx: Record<string, unknown> = v.wireContext
+        ? { ...v.wireContext }
+        : { userId: v.context!.userId, ...v.context!.attributes };
 
       const r = snap.variationDetail<unknown>(v.flagKey, ctx, null);
 
@@ -78,7 +85,8 @@ describe('golden flagVectors through EdgeSnapshot', () => {
 
   // A runner that silently iterated nothing would pass for the wrong reason.
   it('ran the whole class', () => {
-    expect(vectors.flagVectors.length).toBeGreaterThan(0);
+    expect(executedFlagVectors).toBe(vectors.flagVectors.length);
+    expect(executedFlagVectors).toBeGreaterThanOrEqual(71);
   });
 });
 
