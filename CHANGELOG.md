@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.19.1 — 2026-11-09
+
+### Changed
+
+- Republished in lockstep with `@featureflip/browser` 2.19.1. This package has no source changes of its own. Recorded here because the npm release tag publishes all five JavaScript packages at a single version.
+
 ## 2.19.0 — 2026-11-07
 
 ### Changed
