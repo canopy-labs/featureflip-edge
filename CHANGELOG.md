@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.19.2 — 2026-11-16
+
+### Security
+
+- The SDK key is now redacted from every log line the SDK emits, including error messages from the `fetch` implementation you supply. A `fetch` whose error quoted the `Authorization` header could previously put the key in your logs. (#5167)
+
 ## 2.19.1 — 2026-11-09
 
 ### Changed

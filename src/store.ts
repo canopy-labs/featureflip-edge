@@ -1,3 +1,5 @@
+import { defaultLogger } from './log.js';
+import type { Logger } from './log.js';
 import { validateSnapshot } from '../../js-sdk/src/core/validate-snapshot.js';
 import type { GetFlagsResponse } from '../../js-sdk/src/core/types.js';
 
@@ -48,12 +50,16 @@ const noopStore: ConfigStore = {
   put: async () => {},
 };
 
-export function createCacheApiStore(cacheKey: string, cache?: Cache): ConfigStore {
+export function createCacheApiStore(
+  cacheKey: string,
+  cache?: Cache,
+  log: Logger = defaultLogger,
+): ConfigStore {
   const resolved = cache ?? (globalThis as { caches?: { default?: Cache } }).caches?.default;
   if (!resolved) {
     if (!warnedNoCache) {
       warnedNoCache = true;
-      console.warn(`${PREFIX} the Cache API is unavailable here; running memory-only (config is not shared between isolates).`);
+      log.warn(`${PREFIX} the Cache API is unavailable here; running memory-only (config is not shared between isolates).`);
     }
     return noopStore;
   }
@@ -73,7 +79,7 @@ export function createCacheApiStore(cacheKey: string, cache?: Cache): ConfigStor
         validateSnapshot(data);
         return { data, fetchedAt };
       } catch (err) {
-        console.warn(`${PREFIX} ignoring unreadable cached config:`, err);
+        log.warn(`${PREFIX} ignoring unreadable cached config:`, err);
         return undefined;
       }
     },
@@ -91,7 +97,7 @@ export function createCacheApiStore(cacheKey: string, cache?: Cache): ConfigStor
           }),
         );
       } catch (err) {
-        console.warn(`${PREFIX} failed to write config to the Cache API:`, err);
+        log.warn(`${PREFIX} failed to write config to the Cache API:`, err);
       }
     },
   };

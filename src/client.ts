@@ -6,6 +6,8 @@ import { resolveEdgeConfig } from './config.js';
 import type { EdgeConfig, ResolvedEdgeConfig } from './config.js';
 import { EdgeSnapshot } from './snapshot.js';
 import type { EvaluationRecorder } from './snapshot.js';
+import { createLogger, redactError } from './log.js';
+import type { Logger } from './log.js';
 import { configCacheKey, createCacheApiStore } from './store.js';
 import type { ConfigStore } from './store.js';
 
@@ -145,12 +147,14 @@ class Client implements EdgeClient {
   /** The processor flush this client last started or joined. */
   private eventFlush: Promise<void> = Promise.resolve();
 
+  private readonly log: Logger;
   private readonly identity: string;
   private readonly events: EventProcessor;
   private readonly record: EvaluationRecorder;
   private readonly emptySnapshot: EdgeSnapshot;
 
   constructor(private readonly config: ResolvedEdgeConfig) {
+    this.log = createLogger(config.sdkKey);
     this.identity = buildIdentity([`featureflip-edge/${__SDK_VERSION__}`, ...config.wrappers]);
     this.events = new EventProcessor(
       { sendEvents: (request) => this.sendEvents(request) },
@@ -166,13 +170,13 @@ class Client implements EdgeClient {
     this.record = (flagKey, context, detail) => {
       this.events.enqueue(buildEvaluationEvent(flagKey, context ?? {}, detail));
     };
-    this.emptySnapshot = EdgeSnapshot.empty(this.record);
+    this.emptySnapshot = EdgeSnapshot.empty(this.record, this.log);
   }
 
   async load(ctx?: WaitUntilContext): Promise<EdgeSnapshot> {
     if (!ctx && !this.warnedNoWaitUntil) {
       this.warnedNoWaitUntil = true;
-      console.warn(
+      this.log.warn(
         `${PREFIX} running without waitUntil; background refresh may be cut off. ` +
           'Pass the request ctx to load(), or await flush() before responding.',
       );
@@ -182,7 +186,7 @@ class Client implements EdgeClient {
     try {
       snapshot = await this.resolveSnapshot(ctx);
     } catch (err) {
-      console.warn(`${PREFIX} load failed; serving the last good config or defaults:`, err);
+      this.log.warn(`${PREFIX} load failed; serving the last good config or defaults:`, err);
       snapshot = this.usableCopy()?.snapshot ?? this.emptySnapshot;
     }
     // Scheduled only now, after every await above, so its timer is queued behind
@@ -219,7 +223,7 @@ class Client implements EdgeClient {
       this.eventFlush = this.events.flush();
       await this.awaitEventFlush();
     } catch (err) {
-      console.warn(`${PREFIX} event flush failed:`, err);
+      this.log.warn(`${PREFIX} event flush failed:`, err);
     }
   }
 
@@ -302,7 +306,7 @@ class Client implements EdgeClient {
     try {
       stored = await store.get();
     } catch (err) {
-      console.warn(`${PREFIX} config store read failed:`, err);
+      this.log.warn(`${PREFIX} config store read failed:`, err);
       return;
     }
     if (!stored) return;
@@ -310,10 +314,10 @@ class Client implements EdgeClient {
     // A concurrent fetch may have filled memory while the store was being read.
     if (this.memory && this.memory.fetchedAt >= stored.fetchedAt) return;
     try {
-      const snapshot = EdgeSnapshot.fromResponse(stored.data, this.record);
+      const snapshot = EdgeSnapshot.fromResponse(stored.data, this.record, this.log);
       this.memory = { data: stored.data, fetchedAt: stored.fetchedAt, snapshot };
     } catch (err) {
-      console.warn(`${PREFIX} ignoring unusable stored config:`, err);
+      this.log.warn(`${PREFIX} ignoring unusable stored config:`, err);
     }
   }
 
@@ -335,7 +339,7 @@ class Client implements EdgeClient {
       this.backOff();
       if (!fetching.timeoutWarned) {
         fetching.timeoutWarned = true;
-        console.warn(
+        this.log.warn(
           `${PREFIX} no config within ${this.config.loadTimeoutMs}ms; serving defaults while the fetch completes in the background.`,
         );
       }
@@ -361,7 +365,7 @@ class Client implements EdgeClient {
     if (fetching && now - fetching.startedAt > STALLED_FETCH_MS) {
       // Abandoned, and counted as a failed fetch: warned once, here, and backed off.
       this.inflight = fetching = undefined;
-      console.warn(
+      this.log.warn(
         `${PREFIX} config refresh failed:`,
         new Error(`GET /v1/sdk/flags did not settle within ${STALLED_FETCH_MS}ms; abandoned`),
       );
@@ -387,7 +391,7 @@ class Client implements EdgeClient {
     entry.loaded = (async () => {
       try {
         const data = await this.fetchConfig();
-        const snapshot = EdgeSnapshot.fromResponse(data, this.record);
+        const snapshot = EdgeSnapshot.fromResponse(data, this.record, this.log);
         const copy: MemoryCopy = { data, fetchedAt: Date.now(), snapshot };
         this.backoffUntil = 0;
         // A fetch abandoned as stalled can still finish late; never let it
@@ -401,9 +405,9 @@ class Client implements EdgeClient {
         this.backOff();
         if (err instanceof KeyRejectedError) {
           // Distinct from an outage: a revoked or wrong key will not fix itself.
-          console.warn(`${PREFIX} SDK key rejected (${err.status})`);
+          this.log.warn(`${PREFIX} SDK key rejected (${err.status})`);
         } else {
-          console.warn(`${PREFIX} config refresh failed:`, err);
+          this.log.warn(`${PREFIX} config refresh failed:`, err);
         }
       }
     })();
@@ -417,8 +421,7 @@ class Client implements EdgeClient {
 
   /** `GET /v1/sdk/flags`. Throws for any failure, `KeyRejectedError` for 401/403. */
   private async fetchConfig(): Promise<GetFlagsResponse> {
-    const doFetch = this.config.fetch;
-    const response = await doFetch(`${this.config.baseUrl}/v1/sdk/flags`, {
+    const response = await this.fetch(`${this.config.baseUrl}/v1/sdk/flags`, {
       method: 'GET',
       headers: this.headers(),
     });
@@ -439,7 +442,7 @@ class Client implements EdgeClient {
     try {
       await store.put({ data: copy.data, fetchedAt: copy.fetchedAt }, this.config.maxStaleSeconds);
     } catch (err) {
-      console.warn(`${PREFIX} config store write failed:`, err);
+      this.log.warn(`${PREFIX} config store write failed:`, err);
     }
   }
 
@@ -454,9 +457,13 @@ class Client implements EdgeClient {
     this.storePromise ??= (async () => {
       if (this.config.store) return this.config.store;
       try {
-        return createCacheApiStore(await configCacheKey(this.config.baseUrl, this.config.sdkKey));
+        return createCacheApiStore(
+          await configCacheKey(this.config.baseUrl, this.config.sdkKey),
+          undefined,
+          this.log,
+        );
       } catch (err) {
-        console.warn(`${PREFIX} cannot derive the config cache key; running memory-only:`, err);
+        this.log.warn(`${PREFIX} cannot derive the config cache key; running memory-only:`, err);
         return undefined;
       }
     })();
@@ -480,7 +487,7 @@ class Client implements EdgeClient {
     try {
       ctx.waitUntil(promise);
     } catch (err) {
-      console.warn(`${PREFIX} ctx.waitUntil threw; background work may be cut off:`, err);
+      this.log.warn(`${PREFIX} ctx.waitUntil threw; background work may be cut off:`, err);
     }
   }
 
@@ -503,7 +510,7 @@ class Client implements EdgeClient {
           const err = new Error(
             `POST /v1/sdk/events did not settle within ${STALLED_SEND_MS}ms; abandoned`,
           );
-          console.warn(
+          this.log.warn(
             `${PREFIX} failed to send ${request.events.length} analytics event(s); they stay queued for the next flush:`,
             err,
           );
@@ -524,7 +531,7 @@ class Client implements EdgeClient {
           // on a permanent one, so only the retryable case needs saying here.
           if (!(err instanceof EventSendError) || err.retryable) {
             this.eventBackoffUntil = Date.now() + EVENT_RETRY_BACKOFF_MS;
-            console.warn(
+            this.log.warn(
               `${PREFIX} failed to send ${request.events.length} analytics event(s); they stay queued and are retried in ${EVENT_RETRY_BACKOFF_MS / 1000}s:`,
               err,
             );
@@ -537,8 +544,7 @@ class Client implements EdgeClient {
 
   /** `POST /v1/sdk/events`. Throws `EventSendError` for a non-2xx. */
   private async postEvents(request: RecordEventsRequest): Promise<void> {
-    const doFetch = this.config.fetch;
-    const response = await doFetch(`${this.config.baseUrl}/v1/sdk/events`, {
+    const response = await this.fetch(`${this.config.baseUrl}/v1/sdk/events`, {
       method: 'POST',
       headers: { ...this.headers(), 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
@@ -547,6 +553,18 @@ class Client implements EdgeClient {
     // than whenever the runtime collects it.
     discardBody(response);
     if (!response.ok) throw new EventSendError(response.status);
+  }
+
+  /**
+   * The caller's `fetch`, with the key stripped from anything it throws. The
+   * error travels on to the js-sdk event processor, which logs it itself.
+   */
+  private async fetch(input: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.config.fetch(input, init);
+    } catch (err) {
+      throw redactError(err, this.config.sdkKey);
+    }
   }
 
   private headers(): Record<string, string> {

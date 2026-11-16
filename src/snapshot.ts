@@ -3,6 +3,8 @@ import { warnUnbucketable } from '../../js-sdk/src/core/unbucketable.js';
 import type { ExpectedValueType, ResolveDeps } from '../../js-sdk/src/core/resolve-detail.js';
 import { validateSnapshot } from '../../js-sdk/src/core/validate-snapshot.js';
 import { dropUnevaluableEntities } from '../../js-sdk/src/core/unevaluable.js';
+import { defaultLogger } from './log.js';
+import type { Logger } from './log.js';
 import { md5Bytes } from '../../js-sdk/src/platform/browser.js';
 import type {
   EvaluationContext,
@@ -30,10 +32,10 @@ const warnedMissing = new Set<string>();
  * a typo in a key is discoverable without a warning on every read. The set is
  * capped; once full, unseen keys are dropped silently.
  */
-function warnMissingFlag(key: string): void {
+function warnMissingFlag(key: string, log: Logger): void {
   if (warnedMissing.has(key) || warnedMissing.size >= MAX_MISSING_KEYS) return;
   warnedMissing.add(key);
-  console.warn(
+  log.warn(
     `[featureflip-edge] flag "${key}" is not in the loaded configuration; serving the default. ` +
       'Check the key, and that the flag exists in the environment this SDK key belongs to.',
   );
@@ -64,6 +66,7 @@ export class EdgeSnapshot {
   private readonly dropped: ReadonlySet<string>;
   private readonly deps: ResolveDeps;
   private readonly record: EvaluationRecorder;
+  private readonly log: Logger;
 
   private constructor(
     flags: FlagDto[],
@@ -72,6 +75,7 @@ export class EdgeSnapshot {
     version: number | undefined,
     ready: boolean,
     record: EvaluationRecorder,
+    log: Logger,
   ) {
     // Null prototype: a flag key such as `constructor` or `__proto__` must miss
     // rather than resolve to an Object.prototype member, both here and in the
@@ -86,11 +90,12 @@ export class EdgeSnapshot {
     this.version = version;
     this.ready = ready;
     this.record = record;
+    this.log = log;
     this.deps = {
       md5: md5Bytes,
       getSegment: (key) => segmentsByKey.get(key),
       onUnbucketable: (i) => warnUnbucketable(i),
-      onError: (err, key) => console.warn(`[featureflip-edge] evaluation threw for "${key}":`, err),
+      onError: (err, key) => log.warn(`[featureflip-edge] evaluation threw for "${key}":`, err),
     };
   }
 
@@ -104,23 +109,27 @@ export class EdgeSnapshot {
    * @throws {MalformedPayloadError} when the payload violates the wire contract.
    *   The caller decides what to fall back to.
    */
-  static fromResponse(data: GetFlagsResponse, record: EvaluationRecorder): EdgeSnapshot {
+  static fromResponse(
+    data: GetFlagsResponse,
+    record: EvaluationRecorder,
+    log: Logger = defaultLogger,
+  ): EdgeSnapshot {
     validateSnapshot(data);
     const { flags, segments, dropped } = dropUnevaluableEntities(data);
     for (const entity of dropped) {
-      console.warn(
+      log.warn(
         `[featureflip-edge] dropping ${entity.kind} "${entity.key}": ${entity.reason}. ` +
           'This SDK version may be older than the flag configuration; the rest of the ' +
           'configuration was applied.',
       );
     }
     const droppedFlags = new Set(dropped.filter((e) => e.kind === 'flag').map((e) => e.key));
-    return new EdgeSnapshot(flags, segments, droppedFlags, data.version, true, record);
+    return new EdgeSnapshot(flags, segments, droppedFlags, data.version, true, record, log);
   }
 
   /** A snapshot with no flags: every read serves its default with `FlagNotFound`. */
-  static empty(record: EvaluationRecorder): EdgeSnapshot {
-    return new EdgeSnapshot([], [], new Set(), undefined, false, record);
+  static empty(record: EvaluationRecorder, log: Logger = defaultLogger): EdgeSnapshot {
+    return new EdgeSnapshot([], [], new Set(), undefined, false, record, log);
   }
 
   boolVariation(key: string, context: EvaluationContext, defaultValue: boolean): boolean {
@@ -191,12 +200,12 @@ export class EdgeSnapshot {
       this.flags[key], context, defaultValue, this.deps, this.flags, expected,
     );
     if (detail.reason === 'FlagNotFound' && this.ready && !this.dropped.has(key)) {
-      warnMissingFlag(key);
+      warnMissingFlag(key, this.log);
     }
     try {
       this.record(key, context, detail);
     } catch (err) {
-      console.warn(`[featureflip-edge] evaluation recorder threw for "${key}":`, err);
+      this.log.warn(`[featureflip-edge] evaluation recorder threw for "${key}":`, err);
     }
     return detail;
   }
