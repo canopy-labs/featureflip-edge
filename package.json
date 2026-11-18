@@ -1,6 +1,6 @@
 {
   "name": "@featureflip/edge",
-  "version": "2.19.2",
+  "version": "2.20.0",
   "description": "Cloudflare Workers SDK for Featureflip: local flag evaluation at the edge",
   "keywords": [
     "feature-flags",
@@ -41,12 +41,12 @@
     "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261106.1",
+    "@cloudflare/workers-types": "^5.20261109.1",
     "@microsoft/api-extractor": "^7.60.1",
     "@types/node": "^26.6.6",
     "@typescript/typescript6": "^6.0.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.6",
+    "vite": "^8.3.7",
     "vite-plugin-dts": "^5.1.2",
     "vitest": "^5.1.0"
   },

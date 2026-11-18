@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.20.0 — 2026-11-18
+
+### Changed
+
+- Republished in lockstep with `@featureflip/node` 2.20.0. This package has no source changes of its own. Recorded here because the npm release tag publishes all five JavaScript packages at a single version.
+
 ## 2.19.2 — 2026-11-16
 
 ### Security
